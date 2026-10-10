@@ -139,6 +139,8 @@ out:
     return length;
 }
 
+static u32 ksu_hide_seqno(void);
+
 static ssize_t my_write_access(struct file *file, char *buf, size_t size)
 {
     // apply to all app uids
@@ -215,8 +217,10 @@ static ssize_t my_write_access(struct file *file, char *buf, size_t size)
     security_compute_av_user(&fake_state, ssid, tsid, tclass, &avd);
 #endif
 
-    // stock reads 1; a loader load_policy may have bumped the backup before we load
-    avd.seqno = 1;
+    // Cross-check detectors compare the AV-decision metadata here with the
+    // metadata exposed by the status page (selinuxfs/access metadata vs
+    // selinuxfs/status metadata), so both must come from one snapshot.
+    avd.seqno = ksu_hide_seqno();
     length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT, "%x %x %x %x %u %x", avd.allowed, 0xffffffff, avd.auditallow,
                        avd.auditdeny, avd.seqno, avd.flags);
 out:
@@ -266,8 +270,55 @@ call_orig:
     return ((setprocattr_fn)selinux_setprocattr_hook.original)(name, value, size);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+// getprocattr was replaced by getselfattr in 6.13; this hook only exists on
+// the older (<= 6.12) LSM hook tables.
+static int my_getprocattr(const struct task_struct *p, const char *name, char **value);
+struct ksu_lsm_hook selinux_getprocattr_hook =
+    KSU_LSM_HOOK_INIT(getprocattr, "selinux_getprocattr", my_getprocattr, 0);
+
+typedef int (*getprocattr_fn)(const struct task_struct *p, const char *name, char **value);
+static int __nocfi my_getprocattr(const struct task_struct *p, const char *name, char **value)
+{
+    int ret;
+    // Root keeps the real view; only the uids the hide applies to are rewritten.
+    if (!ksu_selinux_hide_enabled || likely(current_uid().val < 10000) || strcmp(name, "current"))
+        return ((getprocattr_fn)selinux_getprocattr_hook.original)(p, name, value);
+
+    ret = ((getprocattr_fn)selinux_getprocattr_hook.original)(p, name, value);
+    if (ret <= 0 || !*value)
+        return ret;
+
+    // The context/access nodes answer from backup_sepolicy, which has no ksu
+    // types. /proc/<pid>/attr/current must not answer from the live policy
+    // instead, or a detector can see one ksu identity accepted here and
+    // rejected there (KSU context split).
+    if (strstr(*value, "u:r:ksu:") || strstr(*value, "u:object_r:ksu:")) {
+        char *masked = kstrdup("u:r:untrusted_app:s0", GFP_KERNEL);
+        if (masked) {
+            kfree(*value);
+            *value = masked;
+            ret = strlen(masked);
+        }
+    }
+    return ret;
+}
+#endif /* LINUX_VERSION_CODE < 6.13 */
+
 static DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
 static struct page *fake_status = NULL;
+
+static u32 ksu_hide_seqno(void)
+{
+    u32 seq = 1;
+    struct page *pg = fake_status ? fake_status : selinux_state.status_page;
+    if (pg) {
+        struct selinux_kernel_status *st = page_address(pg);
+        if (st)
+            seq = st->sequence;
+    }
+    return seq;
+}
 
 static void initialize_fake_status()
 {
@@ -293,9 +344,10 @@ static void initialize_fake_status()
 
     struct selinux_kernel_status *new_status = page_address(new_page);
     memcpy(new_status, status, sizeof(*status));
-    if (ksu_late_loaded) {
-        // In late_load mode the loader may have reloaded sepolicy before us,
-        // so the captured page is not stock. Serve what a stock boot ends
+    {
+        // The captured page is never stock here: KernelSU's own policy load
+        // bumped the counters, and in late_load mode the loader may have
+        // reloaded sepolicy before us. Always serve what a stock boot ends
         // with instead: creation sentinel below 6.10, one load plus one
         // setenforce above.
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
@@ -397,6 +449,14 @@ static int ksu_selinux_hide_enable()
         goto unhook;
     }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+    ret = ksu_lsm_hook(&selinux_getprocattr_hook);
+    if (ret) {
+        pr_err("selinux_hide: init: selinux_getprocattr_hook err: %d\n", ret);
+        goto unhook;
+    }
+#endif
+
     return 0;
 
 unhook:
@@ -431,6 +491,9 @@ static void ksu_selinux_hide_unhook()
         }
     }
     ksu_lsm_unhook(&selinux_setprocattr_hook);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+    ksu_lsm_unhook(&selinux_getprocattr_hook);
+#endif
 }
 
 static void ksu_selinux_hide_disable()
