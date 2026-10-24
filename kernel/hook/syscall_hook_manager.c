@@ -4,6 +4,7 @@
 #include <linux/tracepoint.h>
 #include <asm/syscall.h>
 #include <linux/ptrace.h>
+#include <linux/cred.h>
 #include <linux/slab.h>
 #include <trace/events/syscalls.h>
 
@@ -19,6 +20,7 @@
 #include "hook/setuid_hook.h"
 #include "hook/syscall_hook.h"
 #include "hook/syscall_event_bridge.h"
+#include "policy/allowlist.h"
 #if defined(__riscv)
 #include "hook/riscv64/syscall_regs.h"
 #endif
@@ -107,6 +109,13 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
         return;
 
     if (ksu_has_syscall_hook(id)) {
+        /* 只有可能命中 sucompat 的进程才重定向：newfstatat/faccessat 的 hook
+         * 只为给 allowlist 应用隐藏 su；其余进程走 dispatcher 白付约 1.7us，
+         * 这点时延差正好被春秋这类检测当成 hook 证据。 */
+        if (id == __NR_newfstatat || id == __NR_faccessat) {
+            if (!ksu_is_allow_uid_for_current(current_uid().val))
+                return;
+        }
         struct pt_regs *current_regs = task_pt_regs(current);
 
 #if defined(__x86_64__)
