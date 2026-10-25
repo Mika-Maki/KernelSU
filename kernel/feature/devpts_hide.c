@@ -36,7 +36,12 @@ bool ksu_devpts_path_match(const struct pt_regs *regs)
 		return false;
 	path[sizeof(path) - 1] = 0;
 
-	return !strncmp(path, "/dev/pts/", 9);
+	if (!strncmp(path, "/dev/pts/", 9)) {
+		pr_info_ratelimited("devpts_hide: match pid=%d path=%s\n", current->pid, path);
+		return true;
+	}
+
+	return false;
 }
 
 static void patch_uid_gid(void __user *buf, int uid_off, int gid_off)
@@ -57,6 +62,8 @@ void ksu_devpts_fix_stat(int orig_nr, const struct pt_regs *regs)
 {
 	if (current_uid().val < 10000)
 		return;
+
+	pr_info_ratelimited("devpts_hide: fix_stat nr=%d uid=%d pid=%d\n", orig_nr, current_uid().val, current->pid);
 
 	if (orig_nr == __NR_newfstatat) {
 		patch_uid_gid((void __user *)PT_REGS_PARM3(regs), STAT_UID_OFF, STAT_GID_OFF);
