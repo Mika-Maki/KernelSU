@@ -13,6 +13,7 @@
 #include "hook/tp_marker.h"
 #include "feature/sucompat.h"
 #include "feature/devpts_hide.h"
+#include "policy/allowlist.h"
 #include "hook/setuid_hook.h"
 #include "policy/app_profile.h"
 #include "runtime/ksud.h"
