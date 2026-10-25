@@ -30,7 +30,8 @@ jobs:
       if: ${{ inputs.pack_lkm }}
       run: |
         cp aarch64-android*-lkm/*_kernelsu.ko ./userspace/ksud/bin/aarch64/
-        cp x86_64-android*-lkm/*_kernelsu.ko ./userspace/ksud/bin/x86_64/
+        # x86_64 LKM 已不再随本 fork 构建，缺失时跳过
+        cp x86_64-android*-lkm/*_kernelsu.ko ./userspace/ksud/bin/x86_64/ 2>/dev/null || true
     
     - name: Prepare ksuinit
       if: ${{ inputs.pack_ksuinit }}
