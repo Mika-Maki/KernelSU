@@ -1,92 +1,84 @@
 #include "devpts_hide.h"
 
 #include <linux/cred.h>
-#include <linux/dcache.h>
 #include <linux/fs.h>
 #include <linux/kprobes.h>
-#include <linux/namei.h>
+#include <linux/magic.h>
+#include <linux/stat.h>
 
 #include "klog.h" // IWYU pragma: keep
 
 /*
- * Duck Detector 之类的检测会遍历 /dev/pts，发现 owner uid == 0 的 pty 就判
- * "Found ROOT PTY"。root 进程（su/ksud 起 shell）打开 /dev/ptmx 时，
+ * Duck Detector 会遍历 /dev/pts，用 stat 看 owner uid，发现 0 就判
+ * "Found ROOT PTY"。root 进程（su/ksud 起的 shell）打开 /dev/ptmx 时
  * devpts_pty_new() 会把 i_uid 设成 current_fsuid()==0。
  *
- * 做法：kretprobe devpts_pty_new，在返回的 dentry 上把属主改成 2000(shell)，
- * 与 adb shell 创建的 pty 一致；再扫一遍已存在的节点处理模块加载前创建的。
- * 只改 uid==0 的，非 root 创建的 pty 不动。
+ * 这里不改真实属主（避免动到 tty 的权限语义），只在“视图”层改：
+ * kretprobe generic_fillattr（newfstatat / statx / fstat 最终都走它），
+ * 对 non-root 调用者把 devpts 字符设备节点填出去的 uid/gid 伪装成 2000。
+ * 真实 inode、权限、SELinux 标签、root shell 行为一律不变。
  */
 #define KSU_FAKE_PTY_UID 2000
 
 #ifdef CONFIG_KRETPROBES
-static struct kretprobe devpts_pty_new_rp;
-
-static int devpts_pty_new_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-	struct dentry *dentry = (struct dentry *)regs_return_value(regs);
+struct devpts_fillattr_data {
+	struct kstat *stat;
 	struct inode *inode;
+};
 
-	if (IS_ERR_OR_NULL(dentry))
+static struct kretprobe devpts_fillattr_rp;
+
+static int devpts_fillattr_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct devpts_fillattr_data *data = (struct devpts_fillattr_data *)ri->data;
+	data->inode = (struct inode *)PT_REGS_PARM1(regs);
+	data->stat = (struct kstat *)PT_REGS_PARM2(regs);
+	return 0;
+}
+
+static int devpts_fillattr_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct devpts_fillattr_data *data = (struct devpts_fillattr_data *)ri->data;
+	struct inode *inode = data->inode;
+	struct kstat *stat = data->stat;
+
+	if (!inode || !stat)
+		return 0;
+	if (current_uid().val < 10000)
+		return 0;
+	if (!inode->i_sb || inode->i_sb->s_magic != DEVPTS_SUPER_MAGIC)
+		return 0;
+	if (inode->i_uid.val != 0)
 		return 0;
 
-	inode = d_inode(dentry);
-	if (!inode)
-		return 0;
-
-	if (inode->i_uid.val == 0) {
-		inode->i_uid = KUIDT_INIT(KSU_FAKE_PTY_UID);
-		inode->i_gid = KGIDT_INIT(KSU_FAKE_PTY_UID);
-	}
+	stat->uid = KUIDT_INIT(KSU_FAKE_PTY_UID);
+	stat->gid = KGIDT_INIT(KSU_FAKE_PTY_UID);
 	return 0;
 }
 #endif
-
-void ksu_devpts_hide_sweep(void)
-{
-	struct path path;
-	struct dentry *root, *child;
-
-	if (kern_path("/dev/pts", LOOKUP_DIRECTORY, &path))
-		return;
-
-	root = path.dentry;
-	spin_lock(&root->d_lock);
-	list_for_each_entry(child, &root->d_subdirs, d_child) {
-		struct inode *inode = d_inode(child);
-		if (!inode)
-			continue;
-		if (inode->i_uid.val == 0) {
-			inode->i_uid = KUIDT_INIT(KSU_FAKE_PTY_UID);
-			inode->i_gid = KGIDT_INIT(KSU_FAKE_PTY_UID);
-		}
-	}
-	spin_unlock(&root->d_lock);
-	path_put(&path);
-	pr_info("devpts_hide: sweep done\n");
-}
 
 void ksu_devpts_hide_init(void)
 {
 #ifdef CONFIG_KRETPROBES
 	int ret;
 
-	devpts_pty_new_rp.kp.symbol_name = "devpts_pty_new";
-	devpts_pty_new_rp.handler = devpts_pty_new_ret_handler;
-	devpts_pty_new_rp.data_size = 0;
-	devpts_pty_new_rp.maxactive = 0;
+	devpts_fillattr_rp.kp.symbol_name = "generic_fillattr";
+	devpts_fillattr_rp.entry_handler = devpts_fillattr_entry_handler;
+	devpts_fillattr_rp.handler = devpts_fillattr_ret_handler;
+	devpts_fillattr_rp.data_size = sizeof(struct devpts_fillattr_data);
+	devpts_fillattr_rp.maxactive = 0;
 
-	ret = register_kretprobe(&devpts_pty_new_rp);
+	ret = register_kretprobe(&devpts_fillattr_rp);
 	if (ret)
-		pr_warn("devpts_hide: register_kretprobe(devpts_pty_new) failed: %d\n", ret);
+		pr_warn("devpts_hide: register_kretprobe(generic_fillattr) failed: %d\n", ret);
 	else
-		pr_info("devpts_hide: armed on devpts_pty_new\n");
+		pr_info("devpts_hide: armed on generic_fillattr\n");
 #endif
 }
 
 void ksu_devpts_hide_exit(void)
 {
 #ifdef CONFIG_KRETPROBES
-	unregister_kretprobe(&devpts_pty_new_rp);
+	unregister_kretprobe(&devpts_fillattr_rp);
 #endif
 }

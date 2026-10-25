@@ -1,5 +1,4 @@
 #include "feature/selinux_hide.h"
-#include "feature/devpts_hide.h"
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/namei.h>
@@ -33,7 +32,6 @@ void on_post_fs_data(void)
     // Sanity check for safe mode only needs early-boot input samples.
     ksu_stop_input_hook_runtime();
     ksu_selinux_hide_handle_post_fs_data();
-    ksu_devpts_hide_sweep();
     // retry forced features which failed at second stage
     ksu_feature_apply_forced();
 }

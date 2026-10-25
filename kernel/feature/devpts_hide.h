@@ -3,6 +3,5 @@
 
 void ksu_devpts_hide_init(void);
 void ksu_devpts_hide_exit(void);
-void ksu_devpts_hide_sweep(void);
 
 #endif
