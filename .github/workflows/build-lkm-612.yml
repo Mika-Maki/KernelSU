@@ -1,8 +1,0 @@
-name: Build LKM 6.12
-on:
-  workflow_dispatch:
-jobs:
-  build:
-    uses: ./.github/workflows/ddk-lkm.yml
-    with:
-      kmi: android16-6.12
