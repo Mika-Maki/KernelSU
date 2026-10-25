@@ -198,12 +198,14 @@ jobs:
       - name: Download gradle manager artifact
         uses: actions/download-artifact@v8
         with:
+          digest-mismatch: warn
           name: manager-gradle
           path: artifacts/manager-gradle
 
       - name: Download arm64 ksud
         uses: actions/download-artifact@v8
         with:
+          digest-mismatch: warn
           name: ksud-aarch64-linux-android
           path: artifacts/ksud-aarch64-linux-android
 
