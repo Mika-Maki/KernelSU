@@ -249,13 +249,21 @@ static int __nocfi my_setprocattr(const char *name, void *value, size_t size)
     if (error)
         return error;
 
-    /* Obtain a SID for the context, if one was specified. */
-    if (size && str[0] && str[0] != '\n') {
-        if (str[size - 1] == '\n') {
-            str[size - 1] = 0;
-            size--;
-        }
-        error2 = security_context_to_sid_with_policy(backup_sepolicy, value, size, &tmp_sid, SECSID_NULL, GFP_KERNEL,
+    /* Obtain a SID for the context, if one was specified.
+     * 首尾换行先归一化，让「合法 context」和「同长度但换行开头」都走同一遍解析。
+     * 否则 app_zygote 这类 SETCURRENT 能通过的载体上，A 多付一次解析时间，
+     * 检测器把那点差值当成 hook 证据。
+     */
+    while (size > 0 && *str == '\n') {
+        str++;
+        size--;
+    }
+    if (size > 0 && str[size - 1] == '\n') {
+        str[size - 1] = 0;
+        size--;
+    }
+    if (size > 0) {
+        error2 = security_context_to_sid_with_policy(backup_sepolicy, str, size, &tmp_sid, SECSID_NULL, GFP_KERNEL,
                                                      &sid, &error);
         if (error2 || error)
             return error2 ?: error;
