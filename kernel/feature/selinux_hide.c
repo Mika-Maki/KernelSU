@@ -250,15 +250,38 @@ static int __nocfi my_setprocattr(const char *name, void *value, size_t size)
         return error;
 
     /* Obtain a SID for the context, if one was specified.
-     * 不再按首字节跳过解析：A（合法格式的 invalid 串）和 B（同长度、换行开头）
-     * 都走同一遍 security_context_to_sid_with_policy，长度也保持一致，
-     * 否则 app_zygote 这类 SETCURRENT 能通过的载体上会出现可测的 A-B 时延差。
+     * 合法性判定和解析成本都只取决于长度，避免 app_zygote 载体上出现 A-B 时延差：
+     *   - libselinux 写 attr/current 时 size 可能包含结尾 NUL，先连同换行一起修剪；
+     *   - 字符集扫描走完整段、不在中途 return，成本只与长度有关；
+     *   - 非法负载（原生也必然 EINVAL）不直接返回，而是拿固定长度 dummy 跑一次
+     *     备份策略解析再返回，把失败点差摊平到固定工作里；
+     *   - 合法负载完全走原语义，不做任何提前拒绝。
      */
-    if (size > 0 && str[size - 1] == '\n') {
-        str[size - 1] = 0;
+    while (size > 0 && (str[size - 1] == '\0' || str[size - 1] == '\n'))
         size--;
-    }
+
     if (size > 0) {
+        static const char ksu_dummy_context[] = "u:r:ksu_invalid_dummy_context:s0:c0,c0,c0,c0";
+        bool bad = false;
+        u32 i;
+
+        for (i = 0; i < size; i++) {
+            char c = str[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+                  c == ':' || c == ',' || c == '.' || c == '-'))
+                bad = true;
+        }
+
+        if (bad) {
+            u32 dummy_sid = 0;
+            int dummy_error = 0;
+
+            security_context_to_sid_with_policy(backup_sepolicy, ksu_dummy_context,
+                                                sizeof(ksu_dummy_context) - 1, &tmp_sid, SECSID_NULL, GFP_KERNEL,
+                                                &dummy_sid, &dummy_error);
+            return -EINVAL;
+        }
+
         error2 = security_context_to_sid_with_policy(backup_sepolicy, str, size, &tmp_sid, SECSID_NULL, GFP_KERNEL,
                                                      &sid, &error);
         if (error2 || error)
