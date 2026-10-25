@@ -250,14 +250,10 @@ static int __nocfi my_setprocattr(const char *name, void *value, size_t size)
         return error;
 
     /* Obtain a SID for the context, if one was specified.
-     * 首尾换行先归一化，让「合法 context」和「同长度但换行开头」都走同一遍解析。
-     * 否则 app_zygote 这类 SETCURRENT 能通过的载体上，A 多付一次解析时间，
-     * 检测器把那点差值当成 hook 证据。
+     * 不再按首字节跳过解析：A（合法格式的 invalid 串）和 B（同长度、换行开头）
+     * 都走同一遍 security_context_to_sid_with_policy，长度也保持一致，
+     * 否则 app_zygote 这类 SETCURRENT 能通过的载体上会出现可测的 A-B 时延差。
      */
-    while (size > 0 && *str == '\n') {
-        str++;
-        size--;
-    }
     if (size > 0 && str[size - 1] == '\n') {
         str[size - 1] = 0;
         size--;
