@@ -267,8 +267,8 @@ static int __nocfi my_setprocattr(const char *name, void *value, size_t size)
 
         for (i = 0; i < size; i++) {
             char c = str[i];
-            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
-                  c == ':' || c == ',' || c == '.' || c == '-'))
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == ':' ||
+                  c == ',' || c == '.' || c == '-'))
                 bad = true;
         }
 
@@ -276,9 +276,8 @@ static int __nocfi my_setprocattr(const char *name, void *value, size_t size)
             u32 dummy_sid = 0;
             int dummy_error = 0;
 
-            security_context_to_sid_with_policy(backup_sepolicy, ksu_dummy_context,
-                                                sizeof(ksu_dummy_context) - 1, &tmp_sid, SECSID_NULL, GFP_KERNEL,
-                                                &dummy_sid, &dummy_error);
+            security_context_to_sid_with_policy(backup_sepolicy, ksu_dummy_context, sizeof(ksu_dummy_context) - 1,
+                                                &tmp_sid, SECSID_NULL, GFP_KERNEL, &dummy_sid, &dummy_error);
             return -EINVAL;
         }
 

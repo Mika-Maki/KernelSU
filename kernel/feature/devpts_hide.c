@@ -27,53 +27,57 @@
 
 bool ksu_devpts_path_match(const struct pt_regs *regs)
 {
-	const char __user *fn = (const char __user *)PT_REGS_PARM2(regs);
-	char path[16];
+    const char __user *fn = (const char __user *)PT_REGS_PARM2(regs);
+    char path[16];
 
-	if (!fn)
-		return false;
-	if (strncpy_from_user_nofault(path, fn, sizeof(path) - 1) <= 0)
-		return false;
-	path[sizeof(path) - 1] = 0;
+    if (!fn)
+        return false;
+    if (strncpy_from_user_nofault(path, fn, sizeof(path) - 1) <= 0)
+        return false;
+    path[sizeof(path) - 1] = 0;
 
-	if (!strncmp(path, "/dev/pts/", 9)) {
-		pr_info_ratelimited("devpts_hide: match pid=%d path=%s\n", current->pid, path);
-		return true;
-	}
+    if (!strncmp(path, "/dev/pts/", 9)) {
+        pr_info_ratelimited("devpts_hide: match pid=%d path=%s\n", current->pid, path);
+        return true;
+    }
 
-	return false;
+    return false;
 }
 
 static void patch_uid_gid(void __user *buf, int uid_off, int gid_off)
 {
-	u32 uid, gid;
+    u32 uid, gid;
 
-	if (get_user(uid, (u32 __user *)((char __user *)buf + uid_off)))
-		return;
-	if (uid != 0)
-		return;
-	uid = KSU_FAKE_PTY_UID;
-	gid = KSU_FAKE_PTY_UID;
-	put_user(uid, (u32 __user *)((char __user *)buf + uid_off));
-	put_user(gid, (u32 __user *)((char __user *)buf + gid_off));
+    if (get_user(uid, (u32 __user *)((char __user *)buf + uid_off)))
+        return;
+    if (uid != 0)
+        return;
+    uid = KSU_FAKE_PTY_UID;
+    gid = KSU_FAKE_PTY_UID;
+    put_user(uid, (u32 __user *)((char __user *)buf + uid_off));
+    put_user(gid, (u32 __user *)((char __user *)buf + gid_off));
 }
 
 void ksu_devpts_fix_stat(int orig_nr, const struct pt_regs *regs)
 {
-	if (current_uid().val < 10000)
-		return;
+    if (current_uid().val < 10000)
+        return;
 
-	pr_info_ratelimited("devpts_hide: fix_stat nr=%d uid=%d pid=%d\n", orig_nr, current_uid().val, current->pid);
+    pr_info_ratelimited("devpts_hide: fix_stat nr=%d uid=%d pid=%d\n", orig_nr, current_uid().val, current->pid);
 
-	if (orig_nr == __NR_newfstatat) {
-		patch_uid_gid((void __user *)PT_REGS_PARM3(regs), STAT_UID_OFF, STAT_GID_OFF);
-	}
+    if (orig_nr == __NR_newfstatat) {
+        patch_uid_gid((void __user *)PT_REGS_PARM3(regs), STAT_UID_OFF, STAT_GID_OFF);
+    }
 #ifdef __NR_statx
-	else if (orig_nr == __NR_statx) {
-		patch_uid_gid((void __user *)PT_REGS_PARM5(regs), STATX_UID_OFF, STATX_GID_OFF);
-	}
+    else if (orig_nr == __NR_statx) {
+        patch_uid_gid((void __user *)PT_REGS_PARM5(regs), STATX_UID_OFF, STATX_GID_OFF);
+    }
 #endif
 }
 
-void ksu_devpts_hide_init(void) { }
-void ksu_devpts_hide_exit(void) { }
+void ksu_devpts_hide_init(void)
+{
+}
+void ksu_devpts_hide_exit(void)
+{
+}
