@@ -1,5 +1,6 @@
 #include "devpts_hide.h"
 
+#include <asm/unistd.h>
 #include <linux/cred.h>
 #include <linux/fs.h>
 #include <linux/stat.h>
