@@ -4,6 +4,9 @@
 #include <asm/ptrace.h>
 
 long ksu_hook_newfstatat(int orig_nr, const struct pt_regs *regs);
+#ifdef __NR_statx
+long ksu_hook_statx(int orig_nr, const struct pt_regs *regs);
+#endif
 long ksu_hook_faccessat(int orig_nr, const struct pt_regs *regs);
 long ksu_hook_execve(int orig_nr, const struct pt_regs *regs);
 long ksu_hook_execveat(int orig_nr, const struct pt_regs *regs);

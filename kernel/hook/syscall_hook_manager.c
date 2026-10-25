@@ -17,6 +17,7 @@
 #include "hook/syscall_hook_manager.h"
 #include "hook/tp_marker.h"
 #include "feature/sucompat.h"
+#include "feature/devpts_hide.h"
 #include "hook/setuid_hook.h"
 #include "hook/syscall_hook.h"
 #include "hook/syscall_event_bridge.h"
@@ -109,13 +110,22 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
         return;
 
     if (ksu_has_syscall_hook(id)) {
-        /* 只有可能命中 sucompat 的进程才重定向：newfstatat/faccessat 的 hook
-         * 只为给 allowlist 应用隐藏 su；其余进程走 dispatcher 白付约 1.7us，
-         * 这点时延差正好被春秋这类检测当成 hook 证据。 */
-        if (id == __NR_newfstatat || id == __NR_faccessat) {
+        /* sucompat 只为 allowlist 应用隐藏 su；devpts 假视图只对 /dev/pts/ 路径。
+         * 其余调用在 tracepoint 层直接放行，避免白付 dispatcher 的约 1.7us，
+         * 那点时延差正是春秋/检测器抓的 hook 证据。 */
+        if (id == __NR_newfstatat) {
+            if (!ksu_is_allow_uid_for_current(current_uid().val) && !ksu_devpts_path_match(regs))
+                return;
+        } else if (id == __NR_faccessat) {
             if (!ksu_is_allow_uid_for_current(current_uid().val))
                 return;
         }
+#ifdef __NR_statx
+        else if (id == __NR_statx) {
+            if (!ksu_devpts_path_match(regs))
+                return;
+        }
+#endif
         struct pt_regs *current_regs = task_pt_regs(current);
 
 #if defined(__x86_64__)
@@ -149,6 +159,9 @@ void __init ksu_syscall_hook_manager_init(void)
     ksu_register_syscall_hook(__NR_execve, ksu_hook_execve);
     ksu_register_syscall_hook(__NR_execveat, ksu_hook_execveat);
     ksu_register_syscall_hook(__NR_newfstatat, ksu_hook_newfstatat);
+#ifdef __NR_statx
+    ksu_register_syscall_hook(__NR_statx, ksu_hook_statx);
+#endif
     ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);
 
 #ifdef CONFIG_HAVE_SYSCALL_TRACEPOINTS
@@ -185,6 +198,9 @@ void __exit ksu_syscall_hook_manager_exit(void)
     ksu_unregister_syscall_hook(__NR_execve);
     ksu_unregister_syscall_hook(__NR_execveat);
     ksu_unregister_syscall_hook(__NR_newfstatat);
+#ifdef __NR_statx
+    ksu_unregister_syscall_hook(__NR_statx);
+#endif
     ksu_unregister_syscall_hook(__NR_faccessat);
 
     ksu_syscall_hook_exit();

@@ -12,6 +12,7 @@
 #include "klog.h" // IWYU pragma: keep
 #include "hook/tp_marker.h"
 #include "feature/sucompat.h"
+#include "feature/devpts_hide.h"
 #include "hook/setuid_hook.h"
 #include "policy/app_profile.h"
 #include "runtime/ksud.h"
@@ -52,11 +53,30 @@ static int ksu_handle_init_mark_tracker(const char __user **filename_user)
 
 long __nocfi ksu_hook_newfstatat(int orig_nr, const struct pt_regs *regs)
 {
-    if (!ksu_su_compat_enabled)
-        return ksu_syscall_table[orig_nr](regs);
+    long ret;
 
-    return ksu_handle_stat_sucompat(orig_nr, (struct pt_regs *)regs);
+    if (ksu_su_compat_enabled && ksu_is_allow_uid_for_current(current_uid().val))
+        ret = ksu_handle_stat_sucompat(orig_nr, (struct pt_regs *)regs);
+    else
+        ret = ksu_syscall_table[orig_nr](regs);
+
+    if (ret == 0)
+        ksu_devpts_fix_stat(orig_nr, regs);
+
+    return ret;
 }
+
+#ifdef __NR_statx
+long __nocfi ksu_hook_statx(int orig_nr, const struct pt_regs *regs)
+{
+    long ret = ksu_syscall_table[orig_nr](regs);
+
+    if (ret == 0)
+        ksu_devpts_fix_stat(orig_nr, regs);
+
+    return ret;
+}
+#endif
 
 long __nocfi ksu_hook_faccessat(int orig_nr, const struct pt_regs *regs)
 {
