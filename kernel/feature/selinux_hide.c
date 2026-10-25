@@ -250,19 +250,13 @@ static int __nocfi my_setprocattr(const char *name, void *value, size_t size)
         return error;
 
     /* Obtain a SID for the context, if one was specified.
-     * 先做一次恒定成本的字符集扫描：非法负载在这里就以 EINVAL 返回，不进入
-     * backup 策略解析。解析器按前缀失败点计费，「非法 type」和「同长度换行
-     * 开头」会差出百纳秒；扫描只取决于长度，app_zygote 载体的 A-B 差因此归零。
+     * 不再按首字节跳过解析：A（合法格式的 invalid 串）和 B（同长度、换行开头）
+     * 都走同一遍 security_context_to_sid_with_policy，长度也保持一致，
+     * 否则 app_zygote 这类 SETCURRENT 能通过的载体上会出现可测的 A-B 时延差。
      */
     if (size > 0 && str[size - 1] == '\n') {
         str[size - 1] = 0;
         size--;
-    }
-    for (u32 i = 0; i < size; i++) {
-        char c = str[i];
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
-              c == ':' || c == ',' || c == '.' || c == '-'))
-            return -EINVAL;
     }
     if (size > 0) {
         error2 = security_context_to_sid_with_policy(backup_sepolicy, str, size, &tmp_sid, SECSID_NULL, GFP_KERNEL,
