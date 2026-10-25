@@ -37,6 +37,11 @@ on:
       - 'Cargo.toml'
   workflow_call:
   workflow_dispatch:
+    inputs:
+      manager_version_code:
+        description: 'Override manager versionCode (e.g. 32679)'
+        required: false
+        default: ''
 
 jobs:
   generate-key:
@@ -193,6 +198,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Build with Gradle
+        env:
+          MANAGER_VERSION_CODE: ${{ inputs.manager_version_code }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             ./gradlew clean assembleRelease -PIS_PR_BUILD=true

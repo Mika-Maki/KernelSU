@@ -26,6 +26,8 @@ fun getGitDescribe(): String {
 }
 
 fun getVersionCode(): Int {
+    // 允许 CI 覆盖版本号：内核停在某个旧提交（如 32679）时，用同号 manager 才能通过版本检查
+    System.getenv("MANAGER_VERSION_CODE")?.toIntOrNull()?.let { return it }
     val commitCount = getGitCommitCount()
     return 30000 + commitCount
 }
