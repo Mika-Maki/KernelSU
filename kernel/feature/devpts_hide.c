@@ -6,6 +6,7 @@
 #include <linux/magic.h>
 #include <linux/stat.h>
 
+#include "arch.h"
 #include "klog.h" // IWYU pragma: keep
 
 /*
